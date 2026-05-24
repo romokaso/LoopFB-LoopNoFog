@@ -1,0 +1,1099 @@
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local Lighting = game:GetService("Lighting")
+local HttpService = game:GetService("HttpService")
+
+local player = Players.LocalPlayer
+local coreGui = game:GetService("CoreGui")
+
+local loopFBActive = false
+local loopNoFogActive = false
+local loopFogDensityActive = false
+local loopTimeActive = false
+local fbConnection = nil
+local fogConnection = nil
+local fogDensityConnection = nil
+local timeConnection = nil
+local fbBrightness = 10
+local fogDensityValue = 0
+local timeValue = 14
+local sliderDragging = nil
+local currentTheme = "dark"
+local isMinimized = false
+local isHidden = false
+local isDragging = false
+local dragInput = nil
+local dragStart = nil
+local startPos = nil
+local keybinds = {kb1=nil,kb2=nil,kb3=nil,kb4=nil,kb5=nil,kb6=nil,kb7=nil}
+local listeningSlot = nil
+local SAVE_FILE = "romokaso_loopfb_save.json"
+
+local defaultLighting = {
+    Brightness = Lighting.Brightness,
+    ClockTime = Lighting.ClockTime,
+    GlobalShadows = Lighting.GlobalShadows,
+    Ambient = Lighting.Ambient,
+    OutdoorAmbient = Lighting.OutdoorAmbient,
+    ColorShift_Bottom = Lighting.ColorShift_Bottom,
+    ColorShift_Top = Lighting.ColorShift_Top,
+    EnvironmentDiffuseScale = Lighting.EnvironmentDiffuseScale,
+    EnvironmentSpecularScale = Lighting.EnvironmentSpecularScale,
+    ShadowSoftness = Lighting.ShadowSoftness,
+    FogEnd = Lighting.FogEnd,
+    FogStart = Lighting.FogStart,
+    FogColor = Lighting.FogColor,
+}
+local defaultAtmosphere = {}
+local defaultEffects = {}
+
+for _, v in ipairs(Lighting:GetChildren()) do
+    if v:IsA("Atmosphere") then
+        defaultAtmosphere = {Density=v.Density,Offset=v.Offset,Haze=v.Haze,Glare=v.Glare,Decay=v.Decay,Color=v.Color}
+    elseif v:IsA("ColorCorrectionEffect") then
+        defaultEffects[v] = {Brightness=v.Brightness,Contrast=v.Contrast,Saturation=v.Saturation,TintColor=v.TintColor,Enabled=v.Enabled}
+    elseif v:IsA("BlurEffect") then
+        defaultEffects[v] = {Size=v.Size,Enabled=v.Enabled}
+    elseif v:IsA("SunRaysEffect") then
+        defaultEffects[v] = {Intensity=v.Intensity,Enabled=v.Enabled}
+    elseif v:IsA("DepthOfFieldEffect") then
+        defaultEffects[v] = {Enabled=v.Enabled}
+    end
+end
+
+local function saveData()
+    pcall(function()
+        local data = {
+            loopFB=loopFBActive,loopNoFog=loopNoFogActive,
+            loopFogDensity=loopFogDensityActive,loopTime=loopTimeActive,
+            fbBrightness=fbBrightness,fogDensityValue=fogDensityValue,timeValue=timeValue,
+            theme=currentTheme,
+            kb1=keybinds.kb1 and keybinds.kb1.Name or nil,
+            kb2=keybinds.kb2 and keybinds.kb2.Name or nil,
+            kb3=keybinds.kb3 and keybinds.kb3.Name or nil,
+            kb4=keybinds.kb4 and keybinds.kb4.Name or nil,
+            kb5=keybinds.kb5 and keybinds.kb5.Name or nil,
+            kb6=keybinds.kb6 and keybinds.kb6.Name or nil,
+            kb7=keybinds.kb7 and keybinds.kb7.Name or nil,
+        }
+        writefile(SAVE_FILE, HttpService:JSONEncode(data))
+    end)
+end
+
+local function loadData()
+    local ok, result = pcall(function()
+        if isfile(SAVE_FILE) then return HttpService:JSONDecode(readfile(SAVE_FILE)) end
+        return nil
+    end)
+    if ok and result then return result end
+    return nil
+end
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "LoopFBGui"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent = coreGui
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 270, 0, 165)
+mainFrame.Position = UDim2.new(0.5, -135, 0.5, -82)
+mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.ClipsDescendants = true
+mainFrame.Parent = screenGui
+
+Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 12)
+
+local mainStroke = Instance.new("UIStroke")
+mainStroke.Color = Color3.fromRGB(60, 60, 70)
+mainStroke.Thickness = 2
+mainStroke.Transparency = 0.5
+mainStroke.Parent = mainFrame
+
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1, 0, 0, 35)
+titleBar.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+titleBar.BorderSizePixel = 0
+titleBar.Parent = mainFrame
+
+Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 12)
+
+local titleFix = Instance.new("Frame")
+titleFix.Size = UDim2.new(1, 0, 0, 12)
+titleFix.Position = UDim2.new(0, 0, 1, -12)
+titleFix.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+titleFix.BorderSizePixel = 0
+titleFix.Parent = titleBar
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, -100, 1, 0)
+titleLabel.Position = UDim2.new(0, 10, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "LoopFB & LoopNoFog"
+titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleLabel.TextSize = 13
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Parent = titleBar
+
+local settingsButtonTop = Instance.new("TextButton")
+settingsButtonTop.Size = UDim2.new(0, 26, 0, 26)
+settingsButtonTop.Position = UDim2.new(1, -90, 0, 4)
+settingsButtonTop.BackgroundColor3 = Color3.fromRGB(100, 100, 120)
+settingsButtonTop.BorderSizePixel = 0
+settingsButtonTop.Text = "⚙"
+settingsButtonTop.TextColor3 = Color3.fromRGB(255, 255, 255)
+settingsButtonTop.TextSize = 14
+settingsButtonTop.Font = Enum.Font.GothamBold
+settingsButtonTop.Parent = titleBar
+
+Instance.new("UICorner", settingsButtonTop).CornerRadius = UDim.new(0, 6)
+
+local minimizeButton = Instance.new("TextButton")
+minimizeButton.Size = UDim2.new(0, 26, 0, 26)
+minimizeButton.Position = UDim2.new(1, -58, 0, 4)
+minimizeButton.BackgroundColor3 = Color3.fromRGB(255, 200, 50)
+minimizeButton.BorderSizePixel = 0
+minimizeButton.Text = "-"
+minimizeButton.TextColor3 = Color3.fromRGB(0, 0, 0)
+minimizeButton.TextSize = 16
+minimizeButton.Font = Enum.Font.GothamBold
+minimizeButton.Parent = titleBar
+
+Instance.new("UICorner", minimizeButton).CornerRadius = UDim.new(0, 6)
+
+local closeButton = Instance.new("TextButton")
+closeButton.Size = UDim2.new(0, 26, 0, 26)
+closeButton.Position = UDim2.new(1, -28, 0, 4)
+closeButton.BackgroundColor3 = Color3.fromRGB(220, 50, 50)
+closeButton.BorderSizePixel = 0
+closeButton.Text = "X"
+closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeButton.TextSize = 13
+closeButton.Font = Enum.Font.GothamBold
+closeButton.Parent = titleBar
+
+Instance.new("UICorner", closeButton).CornerRadius = UDim.new(0, 6)
+
+local contentFrame = Instance.new("Frame")
+contentFrame.Name = "ContentFrame"
+contentFrame.Size = UDim2.new(1, 0, 1, -35)
+contentFrame.Position = UDim2.new(0, 0, 0, 35)
+contentFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+contentFrame.BorderSizePixel = 0
+contentFrame.Parent = mainFrame
+
+local function makeMainBtn(parent, text, posY)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, -20, 0, 44)
+    b.Position = UDim2.new(0, 10, 0, posY)
+    b.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+    b.BorderSizePixel = 0
+    b.Text = text
+    b.TextColor3 = Color3.fromRGB(200, 200, 210)
+    b.TextSize = 13
+    b.Font = Enum.Font.GothamBold
+    b.Parent = parent
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 8)
+    local s = Instance.new("UIStroke")
+    s.Color = Color3.fromRGB(60, 60, 80)
+    s.Thickness = 1.5
+    s.Parent = b
+    return b, s
+end
+
+local loopFBBtn, loopFBStroke = makeMainBtn(contentFrame, "LoopFB: OFF", 10)
+local loopNoFogBtn, loopNoFogStroke = makeMainBtn(contentFrame, "LoopNoFog: OFF", 64)
+
+local footerLabel = Instance.new("TextLabel")
+footerLabel.Size = UDim2.new(1, 0, 0, 16)
+footerLabel.Position = UDim2.new(0, 0, 1, -16)
+footerLabel.BackgroundTransparency = 1
+footerLabel.Text = "by: romokaso"
+footerLabel.TextColor3 = Color3.fromRGB(120, 120, 130)
+footerLabel.TextSize = 10
+footerLabel.Font = Enum.Font.GothamBold
+footerLabel.Parent = contentFrame
+
+local footerLabelMinimized = Instance.new("TextLabel")
+footerLabelMinimized.Size = UDim2.new(1, 0, 0, 16)
+footerLabelMinimized.Position = UDim2.new(0, 0, 0, 37)
+footerLabelMinimized.BackgroundTransparency = 1
+footerLabelMinimized.Text = "by: romokaso"
+footerLabelMinimized.TextColor3 = Color3.fromRGB(120, 120, 130)
+footerLabelMinimized.TextSize = 10
+footerLabelMinimized.Font = Enum.Font.GothamBold
+footerLabelMinimized.Visible = false
+footerLabelMinimized.Parent = mainFrame
+
+local confirmFrame = Instance.new("Frame")
+confirmFrame.Size = UDim2.new(1, 0, 1, 0)
+confirmFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+confirmFrame.BackgroundTransparency = 1
+confirmFrame.BorderSizePixel = 0
+confirmFrame.Visible = false
+confirmFrame.ZIndex = 10
+confirmFrame.Parent = mainFrame
+
+Instance.new("UICorner", confirmFrame).CornerRadius = UDim.new(0, 12)
+
+local confirmText = Instance.new("TextLabel")
+confirmText.Size = UDim2.new(1, -24, 0, 40)
+confirmText.Position = UDim2.new(0, 12, 0, 45)
+confirmText.BackgroundTransparency = 1
+confirmText.Text = "Are you sure you want\nto close the GUI?"
+confirmText.TextColor3 = Color3.fromRGB(255, 255, 255)
+confirmText.TextSize = 13
+confirmText.Font = Enum.Font.GothamBold
+confirmText.TextWrapped = true
+confirmText.ZIndex = 11
+confirmText.Parent = confirmFrame
+
+local yesButton = Instance.new("TextButton")
+yesButton.Size = UDim2.new(0, 110, 0, 32)
+yesButton.Position = UDim2.new(0, 12, 0, 100)
+yesButton.BackgroundColor3 = Color3.fromRGB(50, 200, 100)
+yesButton.BorderSizePixel = 0
+yesButton.Text = "Yes"
+yesButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+yesButton.TextSize = 13
+yesButton.Font = Enum.Font.GothamBold
+yesButton.ZIndex = 11
+yesButton.Parent = confirmFrame
+
+Instance.new("UICorner", yesButton).CornerRadius = UDim.new(0, 7)
+
+local noButton = Instance.new("TextButton")
+noButton.Size = UDim2.new(0, 110, 0, 32)
+noButton.Position = UDim2.new(0, 138, 0, 100)
+noButton.BackgroundColor3 = Color3.fromRGB(220, 50, 50)
+noButton.BorderSizePixel = 0
+noButton.Text = "No"
+noButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+noButton.TextSize = 13
+noButton.Font = Enum.Font.GothamBold
+noButton.ZIndex = 11
+noButton.Parent = confirmFrame
+
+Instance.new("UICorner", noButton).CornerRadius = UDim.new(0, 7)
+
+local settingsFrame = Instance.new("Frame")
+settingsFrame.Size = UDim2.new(1, 0, 1, 0)
+settingsFrame.Position = UDim2.new(1, 0, 0, 0)
+settingsFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+settingsFrame.BorderSizePixel = 0
+settingsFrame.Visible = false
+settingsFrame.ZIndex = 10
+settingsFrame.Parent = mainFrame
+
+Instance.new("UICorner", settingsFrame).CornerRadius = UDim.new(0, 12)
+
+local settingsTitleBar = Instance.new("Frame")
+settingsTitleBar.Size = UDim2.new(1, 0, 0, 35)
+settingsTitleBar.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+settingsTitleBar.BorderSizePixel = 0
+settingsTitleBar.ZIndex = 11
+settingsTitleBar.Parent = settingsFrame
+
+Instance.new("UICorner", settingsTitleBar).CornerRadius = UDim.new(0, 12)
+
+local settingsTitleFix = Instance.new("Frame")
+settingsTitleFix.Size = UDim2.new(1, 0, 0, 12)
+settingsTitleFix.Position = UDim2.new(0, 0, 1, -12)
+settingsTitleFix.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+settingsTitleFix.BorderSizePixel = 0
+settingsTitleFix.ZIndex = 11
+settingsTitleFix.Parent = settingsTitleBar
+
+local settingsTitleLabel = Instance.new("TextLabel")
+settingsTitleLabel.Size = UDim2.new(1, -50, 1, 0)
+settingsTitleLabel.Position = UDim2.new(0, 10, 0, 0)
+settingsTitleLabel.BackgroundTransparency = 1
+settingsTitleLabel.Text = "Settings"
+settingsTitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+settingsTitleLabel.TextSize = 15
+settingsTitleLabel.Font = Enum.Font.GothamBold
+settingsTitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+settingsTitleLabel.ZIndex = 11
+settingsTitleLabel.Parent = settingsTitleBar
+
+local backButton = Instance.new("TextButton")
+backButton.Size = UDim2.new(0, 26, 0, 26)
+backButton.Position = UDim2.new(1, -28, 0, 4)
+backButton.BackgroundColor3 = Color3.fromRGB(80, 80, 90)
+backButton.BorderSizePixel = 0
+backButton.Text = "←"
+backButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+backButton.TextSize = 14
+backButton.Font = Enum.Font.GothamBold
+backButton.ZIndex = 11
+backButton.Parent = settingsTitleBar
+
+Instance.new("UICorner", backButton).CornerRadius = UDim.new(0, 6)
+
+local settingsScroll = Instance.new("ScrollingFrame")
+settingsScroll.Size = UDim2.new(1, 0, 1, -35)
+settingsScroll.Position = UDim2.new(0, 0, 0, 35)
+settingsScroll.BackgroundTransparency = 1
+settingsScroll.BorderSizePixel = 0
+settingsScroll.ZIndex = 11
+settingsScroll.ScrollBarThickness = 3
+settingsScroll.ScrollBarImageColor3 = Color3.fromRGB(80, 150, 255)
+settingsScroll.CanvasSize = UDim2.new(0, 0, 0, 860)
+settingsScroll.Parent = settingsFrame
+
+local function makeSep(txt, posY)
+    local l = Instance.new("TextLabel")
+    l.Size = UDim2.new(1, -24, 0, 16)
+    l.Position = UDim2.new(0, 12, 0, posY)
+    l.BackgroundTransparency = 1
+    l.Text = txt
+    l.TextColor3 = Color3.fromRGB(80, 150, 255)
+    l.TextSize = 10
+    l.Font = Enum.Font.GothamBold
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.ZIndex = 11
+    l.Parent = settingsScroll
+    return l
+end
+
+local function makeSLabel(txt, posY)
+    local l = Instance.new("TextLabel")
+    l.Size = UDim2.new(1, -24, 0, 18)
+    l.Position = UDim2.new(0, 12, 0, posY)
+    l.BackgroundTransparency = 1
+    l.Text = txt
+    l.TextColor3 = Color3.fromRGB(200, 200, 210)
+    l.TextSize = 11
+    l.Font = Enum.Font.GothamBold
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.ZIndex = 11
+    l.Parent = settingsScroll
+    return l
+end
+
+local function makeSlider(posY)
+    local bg = Instance.new("Frame")
+    bg.Size = UDim2.new(1, -24, 0, 8)
+    bg.Position = UDim2.new(0, 12, 0, posY)
+    bg.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
+    bg.BorderSizePixel = 0
+    bg.ZIndex = 12
+    bg.Active = true
+    bg.Parent = settingsScroll
+    Instance.new("UICorner", bg).CornerRadius = UDim.new(1, 0)
+
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.new(0, 0, 1, 0)
+    fill.BackgroundColor3 = Color3.fromRGB(80, 150, 255)
+    fill.BorderSizePixel = 0
+    fill.ZIndex = 13
+    fill.Parent = bg
+    Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.new(0, 16, 0, 16)
+    knob.Position = UDim2.new(0, -8, 0.5, -8)
+    knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    knob.BorderSizePixel = 0
+    knob.ZIndex = 14
+    knob.Active = true
+    knob.Parent = bg
+    Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
+
+    local ks = Instance.new("UIStroke")
+    ks.Color = Color3.fromRGB(80, 150, 255)
+    ks.Thickness = 2
+    ks.Parent = knob
+
+    return bg, fill, knob
+end
+
+local function makeToggleBtn(txt, posY)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, -24, 0, 30)
+    b.Position = UDim2.new(0, 12, 0, posY)
+    b.BackgroundColor3 = Color3.fromRGB(35, 35, 48)
+    b.BorderSizePixel = 0
+    b.Text = txt
+    b.TextColor3 = Color3.fromRGB(200, 200, 210)
+    b.TextSize = 12
+    b.Font = Enum.Font.GothamBold
+    b.ZIndex = 12
+    b.Parent = settingsScroll
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 7)
+    local s = Instance.new("UIStroke")
+    s.Color = Color3.fromRGB(60, 60, 80)
+    s.Thickness = 1.5
+    s.Parent = b
+    return b, s
+end
+
+local function makeValLabel(txt, posY)
+    local l = Instance.new("TextLabel")
+    l.Size = UDim2.new(0, 60, 0, 16)
+    l.Position = UDim2.new(1, -72, 0, posY)
+    l.BackgroundTransparency = 1
+    l.Text = txt
+    l.TextColor3 = Color3.fromRGB(80, 150, 255)
+    l.TextSize = 11
+    l.Font = Enum.Font.GothamBold
+    l.TextXAlignment = Enum.TextXAlignment.Right
+    l.ZIndex = 12
+    l.Parent = settingsScroll
+    return l
+end
+
+local sep1 = makeSep("— THEME —", 8)
+
+local darkButton = Instance.new("TextButton")
+darkButton.Size = UDim2.new(0, 110, 0, 30)
+darkButton.Position = UDim2.new(0, 12, 0, 26)
+darkButton.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+darkButton.BorderSizePixel = 0
+darkButton.Text = "Dark"
+darkButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+darkButton.TextSize = 13
+darkButton.Font = Enum.Font.GothamBold
+darkButton.ZIndex = 11
+darkButton.Parent = settingsScroll
+
+Instance.new("UICorner", darkButton).CornerRadius = UDim.new(0, 7)
+
+local darkStroke = Instance.new("UIStroke")
+darkStroke.Color = Color3.fromRGB(80, 150, 255)
+darkStroke.Thickness = 3
+darkStroke.ZIndex = 11
+darkStroke.Parent = darkButton
+
+local lightButton = Instance.new("TextButton")
+lightButton.Size = UDim2.new(0, 110, 0, 30)
+lightButton.Position = UDim2.new(0, 138, 0, 26)
+lightButton.BackgroundColor3 = Color3.fromRGB(240, 240, 250)
+lightButton.BorderSizePixel = 0
+lightButton.Text = "Light"
+lightButton.TextColor3 = Color3.fromRGB(30, 30, 40)
+lightButton.TextSize = 13
+lightButton.Font = Enum.Font.GothamBold
+lightButton.ZIndex = 11
+lightButton.Parent = settingsScroll
+
+Instance.new("UICorner", lightButton).CornerRadius = UDim.new(0, 7)
+
+local sep2 = makeSep("— LOOPFB BRIGHTNESS —", 68)
+local fbValLabel = makeValLabel("10.0", 68)
+local fbSliderBg, fbSliderFill, fbSliderKnob = makeSlider(88)
+
+local sep3 = makeSep("— FOG DENSITY —", 110)
+local fogValLabel = makeValLabel("0%", 110)
+local fogDensityToggleBtn, fogDensityToggleStroke = makeToggleBtn("Fog Density Loop: OFF", 128)
+local fogSliderBg, fogSliderFill, fogSliderKnob = makeSlider(164)
+
+local sep4 = makeSep("— TIME OF DAY —", 186)
+local timeValLabel = makeValLabel("14:00", 186)
+local timeToggleBtn, timeToggleStroke = makeToggleBtn("Time Loop: OFF", 204)
+local timeSliderBg, timeSliderFill, timeSliderKnob = makeSlider(240)
+
+local sep5 = makeSep("— KEYBINDS —", 264)
+
+local kbData = {
+    {slot="kb1", desc="1: Toggle LoopFB",            posY=282},
+    {slot="kb2", desc="2: Toggle LoopNoFog",         posY=330},
+    {slot="kb3", desc="3: Hide / Show GUI",          posY=378},
+    {slot="kb4", desc="4: Minimize / Expand GUI",    posY=426},
+    {slot="kb5", desc="5: Close GUI",                posY=474},
+    {slot="kb6", desc="6: Toggle Fog Density Loop",  posY=522},
+    {slot="kb7", desc="7: Toggle Time Loop",         posY=570},
+}
+
+local kbButtons = {}
+local kbLabels = {}
+
+for _, kd in ipairs(kbData) do
+    kbLabels[kd.slot] = makeSLabel(kd.desc, kd.posY)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, -24, 0, 30)
+    btn.Position = UDim2.new(0, 12, 0, kd.posY + 20)
+    btn.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    btn.BorderSizePixel = 0
+    btn.Text = "None"
+    btn.TextColor3 = Color3.fromRGB(150, 150, 170)
+    btn.TextSize = 12
+    btn.Font = Enum.Font.GothamBold
+    btn.ZIndex = 11
+    btn.Parent = settingsScroll
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 7)
+    local btnStroke = Instance.new("UIStroke")
+    btnStroke.Color = Color3.fromRGB(60, 60, 80)
+    btnStroke.Thickness = 1.5
+    btnStroke.Parent = btn
+    kbButtons[kd.slot] = {button=btn, stroke=btnStroke}
+end
+
+local allSeps = {sep1, sep2, sep3, sep4, sep5}
+local allSliderBgs = {fbSliderBg, fogSliderBg, timeSliderBg}
+local allValLabels = {fbValLabel, fogValLabel, timeValLabel}
+local allToggleBtns = {
+    {btn=fogDensityToggleBtn, stroke=fogDensityToggleStroke},
+    {btn=timeToggleBtn, stroke=timeToggleStroke},
+}
+
+local function animateButton(button)
+    local os = button.Size
+    local ti = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    local g = TweenService:Create(button, ti, {Size=UDim2.new(os.X.Scale,os.X.Offset+4,os.Y.Scale,os.Y.Offset+4)})
+    g:Play()
+    g.Completed:Connect(function()
+        if button and button.Parent then TweenService:Create(button, ti, {Size=os}):Play() end
+    end)
+end
+
+local function updateKbText(slot)
+    local btn = kbButtons[slot].button
+    if keybinds[slot] then
+        btn.Text = keybinds[slot].Name
+        btn.TextColor3 = Color3.fromRGB(80, 150, 255)
+    else
+        btn.Text = "None"
+        btn.TextColor3 = Color3.fromRGB(150, 150, 170)
+    end
+end
+
+local function setToggleVisual(btn, stroke, active, offTxt, onTxt)
+    local t = TweenInfo.new(0.1, Enum.EasingStyle.Quad)
+    if active then
+        TweenService:Create(btn, t, {BackgroundColor3=Color3.fromRGB(30,80,180)}):Play()
+        TweenService:Create(stroke, t, {Color=Color3.fromRGB(80,150,255)}):Play()
+        btn.Text = onTxt
+        btn.TextColor3 = Color3.fromRGB(255,255,255)
+    else
+        local bg = currentTheme=="dark" and Color3.fromRGB(35,35,48) or Color3.fromRGB(215,215,232)
+        local tc = currentTheme=="dark" and Color3.fromRGB(200,200,210) or Color3.fromRGB(30,30,40)
+        TweenService:Create(btn, t, {BackgroundColor3=bg}):Play()
+        TweenService:Create(stroke, t, {Color=Color3.fromRGB(60,60,80)}):Play()
+        btn.Text = offTxt
+        btn.TextColor3 = tc
+    end
+end
+
+local function setMainBtnVisual(btn, stroke, active, offTxt, onTxt)
+    local t = TweenInfo.new(0.1, Enum.EasingStyle.Quad)
+    if active then
+        TweenService:Create(btn, t, {BackgroundColor3=Color3.fromRGB(30,80,180)}):Play()
+        TweenService:Create(stroke, t, {Color=Color3.fromRGB(80,150,255)}):Play()
+        btn.Text = onTxt
+        btn.TextColor3 = Color3.fromRGB(255,255,255)
+    else
+        local bg = currentTheme=="dark" and Color3.fromRGB(35,35,45) or Color3.fromRGB(220,220,235)
+        local tc = currentTheme=="dark" and Color3.fromRGB(200,200,210) or Color3.fromRGB(30,30,40)
+        TweenService:Create(btn, t, {BackgroundColor3=bg}):Play()
+        TweenService:Create(stroke, t, {Color=Color3.fromRGB(60,60,80)}):Play()
+        btn.Text = offTxt
+        btn.TextColor3 = tc
+    end
+end
+
+local function updateAllVisuals()
+    setMainBtnVisual(loopFBBtn, loopFBStroke, loopFBActive, "LoopFB: OFF", "LoopFB: ON")
+    setMainBtnVisual(loopNoFogBtn, loopNoFogStroke, loopNoFogActive, "LoopNoFog: OFF", "LoopNoFog: ON")
+    setToggleVisual(fogDensityToggleBtn, fogDensityToggleStroke, loopFogDensityActive, "Fog Density Loop: OFF", "Fog Density Loop: ON")
+    setToggleVisual(timeToggleBtn, timeToggleStroke, loopTimeActive, "Time Loop: OFF", "Time Loop: ON")
+end
+
+local function restoreDefaultLighting()
+    Lighting.Brightness = defaultLighting.Brightness
+    Lighting.ClockTime = defaultLighting.ClockTime
+    Lighting.GlobalShadows = defaultLighting.GlobalShadows
+    Lighting.Ambient = defaultLighting.Ambient
+    Lighting.OutdoorAmbient = defaultLighting.OutdoorAmbient
+    Lighting.ColorShift_Bottom = defaultLighting.ColorShift_Bottom
+    Lighting.ColorShift_Top = defaultLighting.ColorShift_Top
+    Lighting.EnvironmentDiffuseScale = defaultLighting.EnvironmentDiffuseScale
+    Lighting.EnvironmentSpecularScale = defaultLighting.EnvironmentSpecularScale
+    Lighting.ShadowSoftness = defaultLighting.ShadowSoftness
+    for v, props in pairs(defaultEffects) do
+        if v and v.Parent then for k, val in pairs(props) do v[k]=val end end
+    end
+end
+
+local function restoreDefaultFog()
+    Lighting.FogEnd = defaultLighting.FogEnd
+    Lighting.FogStart = defaultLighting.FogStart
+    Lighting.FogColor = defaultLighting.FogColor
+    for _, v in ipairs(Lighting:GetChildren()) do
+        if v:IsA("Atmosphere") and defaultAtmosphere.Density~=nil then
+            v.Density=defaultAtmosphere.Density v.Offset=defaultAtmosphere.Offset
+            v.Haze=defaultAtmosphere.Haze v.Glare=defaultAtmosphere.Glare
+            v.Decay=defaultAtmosphere.Decay v.Color=defaultAtmosphere.Color
+        end
+    end
+end
+
+local function stopFB()
+    if fbConnection then fbConnection:Disconnect() fbConnection=nil end
+    restoreDefaultLighting()
+end
+
+local function stopFog()
+    if fogConnection then fogConnection:Disconnect() fogConnection=nil end
+    restoreDefaultFog()
+end
+
+local function stopFogDensity()
+    if fogDensityConnection then fogDensityConnection:Disconnect() fogDensityConnection=nil end
+    restoreDefaultFog()
+end
+
+local function stopTime()
+    if timeConnection then timeConnection:Disconnect() timeConnection=nil end
+    Lighting.ClockTime = defaultLighting.ClockTime
+end
+
+local function startFB()
+    if fbConnection then fbConnection:Disconnect() fbConnection=nil end
+    fbConnection = RunService.Heartbeat:Connect(function()
+        Lighting.Brightness = fbBrightness
+        Lighting.GlobalShadows = false
+        Lighting.Ambient = Color3.fromRGB(255,255,255)
+        Lighting.OutdoorAmbient = Color3.fromRGB(255,255,255)
+        Lighting.ColorShift_Bottom = Color3.fromRGB(0,0,0)
+        Lighting.ColorShift_Top = Color3.fromRGB(0,0,0)
+        Lighting.EnvironmentDiffuseScale = 1
+        Lighting.EnvironmentSpecularScale = 1
+        Lighting.ShadowSoftness = 0
+        if not loopTimeActive then
+            Lighting.ClockTime = 14
+        end
+        for _, v in ipairs(Lighting:GetChildren()) do
+            if v:IsA("ColorCorrectionEffect") then
+                v.Brightness=0 v.Contrast=0 v.Saturation=0 v.TintColor=Color3.fromRGB(255,255,255)
+            elseif v:IsA("BlurEffect") then v.Size=0
+            elseif v:IsA("SunRaysEffect") then v.Intensity=0
+            elseif v:IsA("DepthOfFieldEffect") then v.Enabled=false
+            end
+        end
+    end)
+end
+
+local function startFog()
+    if fogConnection then fogConnection:Disconnect() fogConnection=nil end
+    fogConnection = RunService.Heartbeat:Connect(function()
+        Lighting.FogEnd = 9e9
+        Lighting.FogStart = 9e9
+        Lighting.FogColor = Color3.fromRGB(128,128,128)
+        for _, v in ipairs(Lighting:GetChildren()) do
+            if v:IsA("Atmosphere") then
+                v.Density=0 v.Offset=0 v.Haze=0 v.Glare=0
+                v.Decay=Color3.fromRGB(255,255,255)
+                v.Color=Color3.fromRGB(255,255,255)
+            end
+        end
+    end)
+end
+
+local function startFogDensity()
+    if fogDensityConnection then fogDensityConnection:Disconnect() fogDensityConnection=nil end
+    fogDensityConnection = RunService.Heartbeat:Connect(function()
+        local pct = fogDensityValue/100
+        Lighting.FogEnd = 9e9-(9e9-500)*pct
+        Lighting.FogStart = 0
+        for _, v in ipairs(Lighting:GetChildren()) do
+            if v:IsA("Atmosphere") then
+                v.Density = math.clamp(pct*0.85,0,0.85)
+                v.Haze = math.clamp(pct*2.5,0,2.5)
+                v.Glare = math.clamp(1-pct,0,1)
+            end
+        end
+    end)
+end
+
+local function startTime()
+    if timeConnection then timeConnection:Disconnect() timeConnection=nil end
+    timeConnection = RunService.Heartbeat:Connect(function()
+        Lighting.ClockTime = timeValue
+    end)
+end
+
+local function updateFBSlider(pct)
+    pct = math.clamp(pct,0,1)
+    fbSliderFill.Size = UDim2.new(pct,0,1,0)
+    fbSliderKnob.Position = UDim2.new(pct,-8,0.5,-8)
+    fbBrightness = 1+pct*9
+    fbValLabel.Text = string.format("%.1f",fbBrightness)
+end
+
+local function updateFogSlider(pct)
+    pct = math.clamp(pct,0,1)
+    fogSliderFill.Size = UDim2.new(pct,0,1,0)
+    fogSliderKnob.Position = UDim2.new(pct,-8,0.5,-8)
+    fogDensityValue = math.floor(pct*100)
+    fogValLabel.Text = fogDensityValue.."%"
+    if loopFogDensityActive then startFogDensity() end
+end
+
+local function updateTimeSlider(pct)
+    pct = math.clamp(pct,0,1)
+    timeSliderFill.Size = UDim2.new(pct,0,1,0)
+    timeSliderKnob.Position = UDim2.new(pct,-8,0.5,-8)
+    timeValue = pct*24
+    local h = math.floor(timeValue)
+    local m = math.floor((timeValue-h)*60)
+    timeValLabel.Text = string.format("%02d:%02d",h,m)
+    if loopTimeActive then startTime() end
+end
+
+local function processSlider(bgRef, inputX, cb)
+    local bx = bgRef.AbsolutePosition.X
+    local bw = bgRef.AbsoluteSize.X
+    if bw<=0 then return end
+    cb(math.clamp((inputX-bx)/bw,0,1))
+end
+
+local sliderDefs = {
+    {bg=fbSliderBg, knob=fbSliderKnob, cb=function(p) updateFBSlider(p) saveData() end},
+    {bg=fogSliderBg, knob=fogSliderKnob, cb=function(p) updateFogSlider(p) saveData() end},
+    {bg=timeSliderBg, knob=timeSliderKnob, cb=function(p) updateTimeSlider(p) saveData() end},
+}
+
+local function applyThemeColors(theme)
+    local t = TweenInfo.new(0.1, Enum.EasingStyle.Quad)
+    local isDark = theme=="dark"
+    local mainBg = isDark and Color3.fromRGB(20,20,25) or Color3.fromRGB(255,255,255)
+    local topBg = isDark and Color3.fromRGB(30,30,40) or Color3.fromRGB(245,245,250)
+    local strokeC = isDark and Color3.fromRGB(60,60,70) or Color3.fromRGB(200,200,210)
+    local textC = isDark and Color3.fromRGB(255,255,255) or Color3.fromRGB(30,30,40)
+    local footerC = isDark and Color3.fromRGB(120,120,130) or Color3.fromRGB(100,100,110)
+    local slBg = isDark and Color3.fromRGB(50,50,70) or Color3.fromRGB(190,190,210)
+    local sepC = isDark and Color3.fromRGB(80,150,255) or Color3.fromRGB(50,100,220)
+    local settingsLabelC = isDark and Color3.fromRGB(200,200,210) or Color3.fromRGB(50,50,70)
+    local kbBg = isDark and Color3.fromRGB(40,40,55) or Color3.fromRGB(215,215,232)
+    local toggleBg = isDark and Color3.fromRGB(35,35,48) or Color3.fromRGB(215,215,232)
+    local mainBtnBg = isDark and Color3.fromRGB(35,35,45) or Color3.fromRGB(220,220,235)
+    local mainBtnTc = isDark and Color3.fromRGB(200,200,210) or Color3.fromRGB(30,30,40)
+
+    for _, f in ipairs({mainFrame,contentFrame,settingsFrame}) do
+        TweenService:Create(f, t, {BackgroundColor3=mainBg}):Play()
+    end
+    TweenService:Create(mainStroke, t, {Color=strokeC}):Play()
+    for _, f in ipairs({titleBar,titleFix,settingsTitleBar,settingsTitleFix}) do
+        TweenService:Create(f, t, {BackgroundColor3=topBg}):Play()
+    end
+    TweenService:Create(titleLabel, t, {TextColor3=textC}):Play()
+    TweenService:Create(settingsTitleLabel, t, {TextColor3=textC}):Play()
+    TweenService:Create(footerLabel, t, {TextColor3=footerC}):Play()
+    TweenService:Create(footerLabelMinimized, t, {TextColor3=footerC}):Play()
+    TweenService:Create(confirmFrame, t, {BackgroundColor3=isDark and Color3.fromRGB(15,15,20) or Color3.fromRGB(240,240,250)}):Play()
+    TweenService:Create(confirmText, t, {TextColor3=textC}):Play()
+    TweenService:Create(settingsButtonTop, t, {BackgroundColor3=isDark and Color3.fromRGB(100,100,120) or Color3.fromRGB(200,200,220),TextColor3=textC}):Play()
+
+    for _, sb in ipairs(allSliderBgs) do
+        TweenService:Create(sb, t, {BackgroundColor3=slBg}):Play()
+    end
+    for _, sep in ipairs(allSeps) do
+        TweenService:Create(sep, t, {TextColor3=sepC}):Play()
+    end
+    for _, vl in ipairs(allValLabels) do
+        TweenService:Create(vl, t, {TextColor3=Color3.fromRGB(80,150,255)}):Play()
+    end
+    for _, kd in ipairs(kbData) do
+        TweenService:Create(kbLabels[kd.slot], t, {TextColor3=settingsLabelC}):Play()
+        TweenService:Create(kbButtons[kd.slot].button, t, {BackgroundColor3=kbBg}):Play()
+    end
+
+    if isDark then
+        TweenService:Create(darkStroke, t, {Color=Color3.fromRGB(80,150,255)}):Play()
+        local ls = lightButton:FindFirstChild("UIStroke")
+        if ls then
+            TweenService:Create(ls, t, {Transparency=1}):Play()
+            task.delay(0.15, function() if ls and ls.Parent then ls:Destroy() end end)
+        end
+    else
+        TweenService:Create(darkStroke, t, {Color=Color3.fromRGB(200,200,210)}):Play()
+        local ls = lightButton:FindFirstChild("UIStroke")
+        if not ls then
+            ls = Instance.new("UIStroke")
+            ls.Color = Color3.fromRGB(80,150,255)
+            ls.Thickness = 3
+            ls.Transparency = 1
+            ls.ZIndex = 11
+            ls.Parent = lightButton
+        end
+        TweenService:Create(ls, t, {Transparency=0}):Play()
+    end
+
+    if not loopFBActive then
+        TweenService:Create(loopFBBtn, t, {BackgroundColor3=mainBtnBg}):Play()
+        loopFBBtn.TextColor3 = mainBtnTc
+    end
+    if not loopNoFogActive then
+        TweenService:Create(loopNoFogBtn, t, {BackgroundColor3=mainBtnBg}):Play()
+        loopNoFogBtn.TextColor3 = mainBtnTc
+    end
+    if not loopFogDensityActive then
+        TweenService:Create(fogDensityToggleBtn, t, {BackgroundColor3=toggleBg}):Play()
+        fogDensityToggleBtn.TextColor3 = mainBtnTc
+    end
+    if not loopTimeActive then
+        TweenService:Create(timeToggleBtn, t, {BackgroundColor3=toggleBg}):Play()
+        timeToggleBtn.TextColor3 = mainBtnTc
+    end
+end
+
+local function applyTheme(theme)
+    currentTheme = theme
+    applyThemeColors(theme)
+    saveData()
+end
+
+local function doMinimize()
+    if confirmFrame.Visible or settingsFrame.Visible then return end
+    isMinimized = not isMinimized
+    if isMinimized then
+        TweenService:Create(mainFrame, TweenInfo.new(0.1,Enum.EasingStyle.Quad), {Size=UDim2.new(0,270,0,57)}):Play()
+        contentFrame.Visible = false
+        footerLabel.Visible = false
+        footerLabelMinimized.Visible = true
+        minimizeButton.Text = "+"
+    else
+        TweenService:Create(mainFrame, TweenInfo.new(0.1,Enum.EasingStyle.Quad), {Size=UDim2.new(0,270,0,165)}):Play()
+        contentFrame.Visible = true
+        footerLabel.Visible = true
+        footerLabelMinimized.Visible = false
+        minimizeButton.Text = "-"
+    end
+end
+
+local function hideGUI() isHidden=true mainFrame.Visible=false end
+local function showGUI() isHidden=false mainFrame.Visible=true end
+
+local function openConfirm()
+    if confirmFrame.Visible or settingsFrame.Visible then return end
+    if isMinimized then
+        isMinimized = false
+        mainFrame.Size = UDim2.new(0,270,0,165)
+        contentFrame.Visible = true
+        footerLabel.Visible = true
+        footerLabelMinimized.Visible = false
+        minimizeButton.Text = "-"
+    end
+    if isHidden then showGUI() end
+    confirmFrame.Visible = true
+    TweenService:Create(confirmFrame, TweenInfo.new(0.1,Enum.EasingStyle.Quad), {BackgroundTransparency=0.05}):Play()
+end
+
+local function toggleFB()
+    loopFBActive = not loopFBActive
+    if loopFBActive then startFB() else stopFB() end
+    updateAllVisuals() saveData()
+end
+
+local function toggleNoFog()
+    loopNoFogActive = not loopNoFogActive
+    if loopNoFogActive then startFog() else stopFog() end
+    updateAllVisuals() saveData()
+end
+
+local function toggleFogDensity()
+    loopFogDensityActive = not loopFogDensityActive
+    if loopFogDensityActive then startFogDensity() else stopFogDensity() end
+    updateAllVisuals() saveData()
+end
+
+local function toggleTime()
+    loopTimeActive = not loopTimeActive
+    if loopTimeActive then startTime() else stopTime() end
+    updateAllVisuals() saveData()
+end
+
+loopFBBtn.MouseButton1Click:Connect(function() animateButton(loopFBBtn) toggleFB() end)
+loopNoFogBtn.MouseButton1Click:Connect(function() animateButton(loopNoFogBtn) toggleNoFog() end)
+fogDensityToggleBtn.MouseButton1Click:Connect(function() animateButton(fogDensityToggleBtn) toggleFogDensity() end)
+timeToggleBtn.MouseButton1Click:Connect(function() animateButton(timeToggleBtn) toggleTime() end)
+minimizeButton.MouseButton1Click:Connect(function() animateButton(minimizeButton) doMinimize() end)
+closeButton.MouseButton1Click:Connect(function() animateButton(closeButton) openConfirm() end)
+
+yesButton.MouseButton1Click:Connect(function()
+    animateButton(yesButton)
+    stopFB() stopFog() stopFogDensity() stopTime()
+    TweenService:Create(mainFrame, TweenInfo.new(0.3,Enum.EasingStyle.Quad,Enum.EasingDirection.InOut), {
+        Size=UDim2.new(0,0,0,0),
+        Position=UDim2.new(mainFrame.Position.X.Scale,mainFrame.Position.X.Offset+135,mainFrame.Position.Y.Scale,mainFrame.Position.Y.Offset+82)
+    }):Play()
+    task.wait(0.3)
+    screenGui:Destroy()
+end)
+
+noButton.MouseButton1Click:Connect(function()
+    animateButton(noButton)
+    TweenService:Create(confirmFrame, TweenInfo.new(0.1,Enum.EasingStyle.Quad), {BackgroundTransparency=1}):Play()
+    task.wait(0.1)
+    confirmFrame.Visible = false
+end)
+
+settingsButtonTop.MouseButton1Click:Connect(function()
+    if confirmFrame.Visible or settingsFrame.Visible then return end
+    animateButton(settingsButtonTop)
+    if isMinimized then
+        isMinimized = false
+        TweenService:Create(mainFrame, TweenInfo.new(0.1,Enum.EasingStyle.Quad), {Size=UDim2.new(0,270,0,165)}):Play()
+        contentFrame.Visible=true footerLabel.Visible=true footerLabelMinimized.Visible=false
+        minimizeButton.Text = "-"
+        task.wait(0.1)
+    end
+    settingsFrame.Visible = true
+    settingsFrame.Position = UDim2.new(1,0,0,0)
+    TweenService:Create(settingsFrame, TweenInfo.new(0.2,Enum.EasingStyle.Quad,Enum.EasingDirection.Out), {Position=UDim2.new(0,0,0,0)}):Play()
+end)
+
+backButton.MouseButton1Click:Connect(function()
+    animateButton(backButton)
+    TweenService:Create(settingsFrame, TweenInfo.new(0.2,Enum.EasingStyle.Quad,Enum.EasingDirection.In), {Position=UDim2.new(1,0,0,0)}):Play()
+    task.wait(0.2)
+    settingsFrame.Visible = false
+end)
+
+darkButton.MouseButton1Click:Connect(function() animateButton(darkButton) applyTheme("dark") end)
+lightButton.MouseButton1Click:Connect(function() animateButton(lightButton) applyTheme("light") end)
+
+for _, kd in ipairs(kbData) do
+    local slot = kd.slot
+    kbButtons[slot].button.MouseButton1Click:Connect(function()
+        if listeningSlot~=nil then return end
+        listeningSlot = slot
+        kbButtons[slot].button.Text = "Press key..."
+        kbButtons[slot].button.TextColor3 = Color3.fromRGB(255,200,50)
+    end)
+end
+
+for _, sd in ipairs(sliderDefs) do
+    local s = sd
+    s.bg.InputBegan:Connect(function(input)
+        if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+            sliderDragging = s
+            processSlider(s.bg, input.Position.X, s.cb)
+        end
+    end)
+    s.knob.InputBegan:Connect(function(input)
+        if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+            sliderDragging = s
+        end
+    end)
+end
+
+titleBar.InputBegan:Connect(function(input)
+    if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+        isDragging = true
+        dragStart = input.Position
+        startPos = mainFrame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState==Enum.UserInputState.End then isDragging=false end
+        end)
+    end
+end)
+
+titleBar.InputChanged:Connect(function(input)
+    if input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input==dragInput and isDragging then
+        local delta = input.Position-dragStart
+        mainFrame.Position = UDim2.new(startPos.X.Scale,startPos.X.Offset+delta.X,startPos.Y.Scale,startPos.Y.Offset+delta.Y)
+    end
+    if sliderDragging and (input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch) then
+        processSlider(sliderDragging.bg, input.Position.X, sliderDragging.cb)
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+        sliderDragging = nil
+        isDragging = false
+    end
+end)
+
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if input.UserInputType~=Enum.UserInputType.Keyboard then return end
+    if listeningSlot~=nil then
+        local slot = listeningSlot
+        listeningSlot = nil
+        keybinds[slot] = input.KeyCode
+        updateKbText(slot)
+        saveData()
+        return
+    end
+    if gpe then return end
+    if keybinds.kb1 and input.KeyCode==keybinds.kb1 then toggleFB()
+    elseif keybinds.kb2 and input.KeyCode==keybinds.kb2 then toggleNoFog()
+    elseif keybinds.kb3 and input.KeyCode==keybinds.kb3 then
+        if isHidden then showGUI() else hideGUI() end
+    elseif keybinds.kb4 and input.KeyCode==keybinds.kb4 then doMinimize()
+    elseif keybinds.kb5 and input.KeyCode==keybinds.kb5 then openConfirm()
+    elseif keybinds.kb6 and input.KeyCode==keybinds.kb6 then toggleFogDensity()
+    elseif keybinds.kb7 and input.KeyCode==keybinds.kb7 then toggleTime()
+    end
+end)
+
+minimizeButton.MouseEnter:Connect(function() TweenService:Create(minimizeButton,TweenInfo.new(0.1),{BackgroundColor3=Color3.fromRGB(255,220,80)}):Play() end)
+minimizeButton.MouseLeave:Connect(function() TweenService:Create(minimizeButton,TweenInfo.new(0.1),{BackgroundColor3=Color3.fromRGB(255,200,50)}):Play() end)
+closeButton.MouseEnter:Connect(function() TweenService:Create(closeButton,TweenInfo.new(0.1),{BackgroundColor3=Color3.fromRGB(255,70,70)}):Play() end)
+closeButton.MouseLeave:Connect(function() TweenService:Create(closeButton,TweenInfo.new(0.1),{BackgroundColor3=Color3.fromRGB(220,50,50)}):Play() end)
+settingsButtonTop.MouseEnter:Connect(function() TweenService:Create(settingsButtonTop,TweenInfo.new(0.1),{BackgroundColor3=currentTheme=="dark" and Color3.fromRGB(120,120,140) or Color3.fromRGB(220,220,240)}):Play() end)
+settingsButtonTop.MouseLeave:Connect(function() TweenService:Create(settingsButtonTop,TweenInfo.new(0.1),{BackgroundColor3=currentTheme=="dark" and Color3.fromRGB(100,100,120) or Color3.fromRGB(200,200,220)}):Play() end)
+yesButton.MouseEnter:Connect(function() TweenService:Create(yesButton,TweenInfo.new(0.1),{BackgroundColor3=Color3.fromRGB(70,220,120)}):Play() end)
+yesButton.MouseLeave:Connect(function() TweenService:Create(yesButton,TweenInfo.new(0.1),{BackgroundColor3=Color3.fromRGB(50,200,100)}):Play() end)
+noButton.MouseEnter:Connect(function() TweenService:Create(noButton,TweenInfo.new(0.1),{BackgroundColor3=Color3.fromRGB(255,70,70)}):Play() end)
+noButton.MouseLeave:Connect(function() TweenService:Create(noButton,TweenInfo.new(0.1),{BackgroundColor3=Color3.fromRGB(220,50,50)}):Play() end)
+backButton.MouseEnter:Connect(function() TweenService:Create(backButton,TweenInfo.new(0.1),{BackgroundColor3=Color3.fromRGB(100,100,110)}):Play() end)
+backButton.MouseLeave:Connect(function() TweenService:Create(backButton,TweenInfo.new(0.1),{BackgroundColor3=Color3.fromRGB(80,80,90)}):Play() end)
+darkButton.MouseEnter:Connect(function() TweenService:Create(darkButton,TweenInfo.new(0.1),{BackgroundColor3=Color3.fromRGB(40,40,50)}):Play() end)
+darkButton.MouseLeave:Connect(function() TweenService:Create(darkButton,TweenInfo.new(0.1),{BackgroundColor3=Color3.fromRGB(30,30,40)}):Play() end)
+lightButton.MouseEnter:Connect(function() TweenService:Create(lightButton,TweenInfo.new(0.1),{BackgroundColor3=Color3.fromRGB(255,255,255)}):Play() end)
+lightButton.MouseLeave:Connect(function() TweenService:Create(lightButton,TweenInfo.new(0.1),{BackgroundColor3=Color3.fromRGB(240,240,250)}):Play() end)
+
+local function mainBtnHover(btn, activeRef)
+    btn.MouseEnter:Connect(function()
+        if not activeRef() then TweenService:Create(btn,TweenInfo.new(0.1),{BackgroundColor3=currentTheme=="dark" and Color3.fromRGB(45,45,58) or Color3.fromRGB(205,205,225)}):Play() end
+    end)
+    btn.MouseLeave:Connect(function()
+        if not activeRef() then TweenService:Create(btn,TweenInfo.new(0.1),{BackgroundColor3=currentTheme=="dark" and Color3.fromRGB(35,35,45) or Color3.fromRGB(220,220,235)}):Play() end
+    end)
+end
+
+mainBtnHover(loopFBBtn, function() return loopFBActive end)
+mainBtnHover(loopNoFogBtn, function() return loopNoFogActive end)
+
+local savedData = loadData()
+if savedData then
+    if savedData.theme then currentTheme=savedData.theme end
+    if savedData.fbBrightness then fbBrightness=savedData.fbBrightness end
+    if savedData.fogDensityValue then fogDensityValue=savedData.fogDensityValue end
+    if savedData.timeValue then timeValue=savedData.timeValue end
+    for _, kd in ipairs(kbData) do
+        if savedData[kd.slot] then
+            pcall(function() keybinds[kd.slot]=Enum.KeyCode[savedData[kd.slot]] end)
+        end
+        updateKbText(kd.slot)
+    end
+    applyThemeColors(currentTheme)
+    updateFBSlider((fbBrightness-1)/9)
+    updateFogSlider(fogDensityValue/100)
+    updateTimeSlider(timeValue/24)
+    if savedData.loopFB then loopFBActive=true startFB() end
+    if savedData.loopNoFog then loopNoFogActive=true startFog() end
+    if savedData.loopFogDensity then loopFogDensityActive=true startFogDensity() end
+    if savedData.loopTime then loopTimeActive=true startTime() end
+    updateAllVisuals()
+else
+    applyThemeColors("dark")
+    updateFBSlider((fbBrightness-1)/9)
+    updateFogSlider(0)
+    updateTimeSlider(14/24)
+end
